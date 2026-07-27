@@ -5,8 +5,7 @@ Lean OctoPrint fork for running multiple 3D printers off one low-power host
 picking a printer, sending a print, and checking progress across all of them
 without juggling browser tabs.
 
-nanoPrint is **not** a multi-printer manager under the hood — OctoPrint has no
-such thing built in. It's one OctoPrint process per printer (own port, own
+nanoPrint is **not** a multi-printer manager under the hood. It's one OctoPrint process per printer (own port, own
 config, own systemd service), tuned to stay responsive on constrained
 hardware, plus a static dashboard page that talks to each instance's REST API
 directly.
