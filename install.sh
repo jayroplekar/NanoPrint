@@ -11,6 +11,9 @@
 # Note: RPi3-class hardware was only validated with 2 instances (see
 # LEAN_OCTOPRINT_RPi3.md) — going higher on the same board is untested; watch
 # `htop` during a real print if you push PRINTER_COUNT up.
+#
+# Port/naming scheme below (BASE_PORT, svc_name, data_dir) must match
+# dashboard/index.html's defaults — see SPEC.md before changing either.
 set -euo pipefail
 
 PRINTER_COUNT="${PRINTER_COUNT:-2}"

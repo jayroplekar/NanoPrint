@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>nanoPrint — Install</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #14161a; --panel: #1e2126; --border: #2c3038; --text: #e6e8eb;
+    --muted: #8a919e; --accent: #4f9dff; --good: #3ecf6a; --warn: #e0a52c; --bad: #e0524c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.55;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 1.7rem; margin: 0 0 6px; }
+  .tagline { color: var(--muted); margin: 0 0 36px; font-size: 0.95rem; }
+  h2 { font-size: 1.15rem; margin: 40px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  h2 .step-num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 50%; background: var(--accent);
+    color: #0a0c0f; font-size: 0.75rem; font-weight: 700; margin-right: 8px;
+  }
+  p { margin: 0 0 12px; }
+  ul { margin: 0 0 12px; padding-left: 22px; }
+  li { margin: 4px 0; }
+  code { background: #262a31; padding: 1px 6px; border-radius: 4px; font-size: 0.88em; }
+  .cmd-block {
+    position: relative; background: #0d0f12; border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px; margin: 14px 0; overflow-x: auto;
+  }
+  .cmd-block pre { margin: 0; font-size: 0.85rem; white-space: pre; }
+  .cmd-block code { background: none; padding: 0; }
+  .copy-btn {
+    position: absolute; top: 10px; right: 10px; background: #262a31; color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px;
+    font-size: 0.75rem; cursor: pointer;
+  }
+  .copy-btn:hover { border-color: var(--accent); }
+  .copy-btn.copied { border-color: var(--good); color: var(--good); }
+  .callout {
+    border-left: 3px solid var(--accent); background: #1a2530; border-radius: 0 8px 8px 0;
+    padding: 10px 16px; margin: 14px 0; font-size: 0.9rem;
+  }
+  .callout.warn { border-left-color: var(--warn); background: #2a2419; }
+  .callout b { color: var(--text); }
+  .urls { list-style: none; padding: 0; margin: 14px 0; }
+  .urls li {
+    display: flex; justify-content: space-between; gap: 12px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; margin-bottom: 6px;
+    font-size: 0.88rem;
+  }
+  .urls li span:first-child { color: var(--muted); }
+  .urls li code { font-size: 0.85rem; }
+  .refs { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0; }
+  .refs a {
+    color: var(--text); text-decoration: none; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 12px; font-size: 0.85rem;
+  }
+  .refs a:hover { border-color: var(--accent); color: var(--accent); }
+  footer { color: var(--muted); font-size: 0.8rem; margin-top: 50px; padding-top: 16px; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>nanoPrint — Install</h1>
+  <p class="tagline">Lean OctoPrint fork, N printers on one host. This page covers the recommended one-command path — see <a href="INSTALL_RPi3.md" style="color:var(--accent)">INSTALL_RPi3.md</a> for the full manual walkthrough and troubleshooting.</p>
+
+  <h2><span class="step-num">1</span>Prerequisites</h2>
+  <ul>
+    <li>Raspberry Pi 3B/3B+ (or better — see hardware note below)</li>
+    <li>Raspberry Pi OS Lite (64-bit) — Bookworm or Bullseye</li>
+    <li>microSD 16GB+, Class 10 / A1</li>
+    <li>SSH access to the Pi</li>
+  </ul>
+  <p>Flash via Raspberry Pi Imager, set hostname (e.g. <code>raspberrypi</code>), enable SSH, then:</p>
+  <div class="cmd-block">
+    <button class="copy-btn" onclick="copyBlock(this)">Copy</button>
+    <pre><code>ssh pi@raspberrypi.local
+sudo apt update && sudo apt upgrade -y</code></pre>
+  </div>
+
+  <h2><span class="step-num">2</span>Get the source and run the installer</h2>
+  <div class="cmd-block">
+    <button class="copy-btn" onclick="copyBlock(this)">Copy</button>
+    <pre><code>git clone &lt;repo-url&gt; ~/nanoprint-src && cd ~/nanoprint-src
+./install.sh</code></pre>
+  </div>
+  <p>One command sets up system tuning, both printer instances, nginx, and the dashboard. Safe to re-run — it never overwrites an existing <code>config.yaml</code>.</p>
+
+  <div class="callout">
+    <b>More than 2 printers on this host?</b> Set <code>PRINTER_COUNT</code> before running:
+    <div class="cmd-block" style="margin-top:8px;">
+      <button class="copy-btn" onclick="copyBlock(this)">Copy</button>
+      <pre><code>PRINTER_COUNT=4 ./install.sh</code></pre>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <b>RPi3 hardware note:</b> the lean tuning this installer applies was only validated with 2 concurrent instances on RPi3-class hardware (1GB RAM, 4-core burst). Going higher on the same board is untested — watch <code>htop</code> during a real print before trusting more instances unattended. A more capable board (RPi4/5) has real headroom for a bigger "mini farm."
+  </div>
+
+  <h2><span class="step-num">3</span>What you get</h2>
+  <ul class="urls">
+    <li><span>Printer 1 UI</span><code>http://raspberrypi.local/</code></li>
+    <li><span>Printer 2 UI</span><code>http://raspberrypi.local:5001</code></li>
+    <li><span>Dashboard</span><code>http://raspberrypi.local/dashboard/</code></li>
+  </ul>
+  <p>First visit to each printer UI shows the OctoPrint setup wizard — connect each instance to its own USB serial port there.</p>
+  <p>You were added to the <code>dialout</code> group during install — log out and back in (or reboot) before serial ports work.</p>
+
+  <h2><span class="step-num">4</span>Adding printers beyond the first two</h2>
+  <p>Open the dashboard and click <b>+ Add Printer</b> for each instance you set up with <code>PRINTER_COUNT</code> — it defaults to the next sequential port (<code>raspberrypi.local:5002</code>, <code>:5003</code>, ...) automatically, matching what the installer just set up.</p>
+
+  <h2>Reference</h2>
+  <div class="refs">
+    <a href="INSTALL_RPi3.md">Full manual install guide</a>
+    <a href="LEAN_OCTOPRINT_RPi3.md">Lean tuning rationale</a>
+    <a href="SPEC.md">Shared install/network spec</a>
+    <a href="dashboard/index.html">Dashboard source</a>
+  </div>
+
+  <footer>nanoPrint — this page and <code>INSTALL_RPi3.md</code> both describe the same installer; if they disagree, <code>install.sh</code> is the source of truth.</footer>
+</div>
+
+<script>
+function copyBlock(btn) {
+  const codeEl = btn.nextElementSibling;
+  const text = codeEl.textContent;
+
+  // Fallback for when the Clipboard API is unavailable — e.g. this page
+  // served over plain http (no TLS) on the LAN, which is not a "secure
+  // context" and leaves navigator.clipboard undefined entirely. Select the
+  // command text instead so the user can Ctrl+C it themselves.
+  const selectFallback = () => {
+    const range = document.createRange();
+    range.selectNodeContents(codeEl);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    btn.textContent = "Selected — press Ctrl+C";
+    setTimeout(() => { btn.textContent = "Copy"; }, 2500);
+  };
+
+  if (!navigator.clipboard || !navigator.clipboard.writeText) {
+    selectFallback();
+    return;
+  }
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = "Copied";
+    btn.classList.add("copied");
+    setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1500);
+  }).catch(selectFallback);
+}
+</script>
+</body>
+</html>
