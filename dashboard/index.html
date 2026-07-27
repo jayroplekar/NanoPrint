@@ -14,7 +14,8 @@
     margin: 0; font-family: -apple-system, Segoe UI, Roboto, sans-serif;
     background: var(--bg); color: var(--text); padding: 24px;
   }
-  h1 { font-size: 1.3rem; margin: 0 0 20px; }
+  h1 { font-size: 1.3rem; margin: 0; }
+  .page-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 18px; }
   .card {
     background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px;
@@ -86,7 +87,10 @@
 </style>
 </head>
 <body>
-<h1>nanoPrint Dashboard</h1>
+<div class="page-head">
+  <h1>nanoPrint Dashboard</h1>
+  <button onclick="addPrinter()">+ Add Printer</button>
+</div>
 <div class="grid" id="grid"></div>
 
 <div class="overlay" id="overlay">
@@ -109,27 +113,73 @@
 </div>
 
 <script>
-// Two printers, config persisted in localStorage per slot.
-const SLOTS = ["printer1", "printer2"];
-const DEFAULTS = {
-  printer1: { name: "Printer 1", host: "raspberrypi.local", port: "5000", key: "" },
-  printer2: { name: "Printer 2", host: "raspberrypi.local", port: "5001", key: "" },
-};
+// Printer list persisted in localStorage — not fixed to two. Slot IDs are
+// "printer1", "printer2", ... ; matches install.sh's port scheme (5000 + n-1)
+// for a fresh single-host install with no manual config needed.
+const BASE_PORT = 5000;
 const POLL_MS = 5000;
 
+let SLOTS = loadSlots();
 const cache = {};       // slot -> { job, printer, err }
 const webcamUrl = {};   // slot -> resolved stream url (or null once known-absent)
 let openSlot = null;    // slot currently shown in modal, or null
 
+function slotNumber(slot) {
+  return parseInt(slot.replace("printer", ""), 10);
+}
+function loadSlots() {
+  const raw = localStorage.getItem("nanoprint_slots");
+  if (raw) {
+    try {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr) && arr.length) return arr;
+    } catch {}
+  }
+  return ["printer1", "printer2"]; // fresh install default — matches install.sh
+}
+function saveSlots() {
+  localStorage.setItem("nanoprint_slots", JSON.stringify(SLOTS));
+}
+function defaultCfgFor(slot) {
+  const n = slotNumber(slot);
+  return { name: `Printer ${n}`, host: "raspberrypi.local", port: String(BASE_PORT + n - 1), key: "" };
+}
 function loadCfg(slot) {
   const raw = localStorage.getItem("nanoprint_" + slot);
-  return raw ? JSON.parse(raw) : { ...DEFAULTS[slot] };
+  return raw ? JSON.parse(raw) : defaultCfgFor(slot);
 }
 function saveCfg(slot, cfg) {
   localStorage.setItem("nanoprint_" + slot, JSON.stringify(cfg));
 }
 function baseUrl(cfg) {
   return `http://${cfg.host}:${cfg.port}`;
+}
+
+function addPrinter() {
+  const nums = SLOTS.map(slotNumber).filter(n => !isNaN(n));
+  const next = (nums.length ? Math.max(...nums) : 0) + 1;
+  const slot = "printer" + next;
+  SLOTS.push(slot);
+  saveSlots();
+  renderGrid();
+  poll(slot);
+}
+
+function removePrinter(slot) {
+  const name = loadCfg(slot).name;
+  if (!confirm(`Remove ${name} from this dashboard? Its connection settings will be cleared.`)) return;
+  SLOTS = SLOTS.filter(s => s !== slot);
+  saveSlots();
+  localStorage.removeItem("nanoprint_" + slot);
+  delete cache[slot];
+  delete webcamUrl[slot];
+  if (openSlot === slot) closeModal();
+  renderGrid();
+}
+
+function renderGrid() {
+  grid.innerHTML = "";
+  SLOTS.forEach(slot => grid.appendChild(card(slot)));
 }
 
 function card(slot) {
@@ -172,6 +222,7 @@ function card(slot) {
         <input type="password" id="${slot}-cfg-key">
         <div class="actions">
           <button onclick="saveSettings('${slot}')">Save</button>
+          <button class="danger" onclick="removePrinter('${slot}')">Remove printer</button>
         </div>
       </details>
     </div>
@@ -180,6 +231,9 @@ function card(slot) {
   el.querySelector(`#${slot}-cfg-host`).value = cfg.host;
   el.querySelector(`#${slot}-cfg-port`).value = cfg.port;
   el.querySelector(`#${slot}-cfg-key`).value = cfg.key;
+  el.querySelector(`#${slot}-file-input`).addEventListener("change", (e) => {
+    if (e.target.files[0]) uploadAndPrint(slot, e.target.files[0]);
+  });
   return el;
 }
 
@@ -436,12 +490,7 @@ async function cancelPrint(slot) {
 }
 
 const grid = document.getElementById("grid");
-SLOTS.forEach(slot => {
-  grid.appendChild(card(slot));
-  document.getElementById(`${slot}-file-input`).addEventListener("change", (e) => {
-    if (e.target.files[0]) uploadAndPrint(slot, e.target.files[0]);
-  });
-});
+renderGrid();
 
 function pollAll() { SLOTS.forEach(poll); }
 pollAll();

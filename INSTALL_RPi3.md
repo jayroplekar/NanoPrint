@@ -1,5 +1,5 @@
 # NanoPrint — RPi3 Install Guide
-Lean OctoPrint fork. 2-printer capable. Optimized for responsiveness on RPi3.
+Lean OctoPrint fork. N-printer capable on one host (default 2). Optimized for responsiveness on RPi3.
 
 ---
 
@@ -11,13 +11,25 @@ is automated by `install.sh`:
 ```bash
 git clone <repo-url> ~/nanoprint-src && cd ~/nanoprint-src
 ./install.sh
+
+# Or for more than 2 printers on this host:
+PRINTER_COUNT=4 ./install.sh
 ```
 
-Sets up both printer instances (lean config, CORS for the dashboard), nginx,
+Sets up all printer instances (lean config, CORS for the dashboard), nginx,
 serial group membership, and the dashboard at `http://<host>.local/dashboard/`
-in one run. Safe to re-run — never overwrites an existing `config.yaml`. Skip
-to Step 10+ below only if you need to customize something the script doesn't
-cover (custom USB port mapping, webcam stream URLs — see Step 12).
+in one run. Safe to re-run — never overwrites an existing `config.yaml`, and
+raising `PRINTER_COUNT` on a re-run only adds the new instances. Instance ports
+are `5000, 5001, 5002, ...`; the dashboard's "+ Add Printer" button matches
+that scheme automatically for instances 3+. Skip to Step 10+ below only if you
+need to customize something the script doesn't cover (custom USB port
+mapping, webcam stream URLs — see Step 12).
+
+**RPi3 hardware note:** the lean tuning in `LEAN_OCTOPRINT_RPi3.md` was only
+validated with 2 concurrent instances on an RPi3's 1GB/4-core-burst profile.
+`PRINTER_COUNT` above 2 on the same board is untested — watch `htop` during a
+real print before trusting it unattended. More capable boards (RPi4/5) have
+more headroom for a real "mini farm" on one host.
 
 The manual steps below are the reference this script automates — read them if
 `install.sh` fails partway and you need to finish by hand.

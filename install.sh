@@ -1,20 +1,24 @@
 #!/usr/bin/env bash
-# nanoPrint one-click installer — RPi3, two printers, lean config, dashboard.
+# nanoPrint one-click installer — RPi, N printers on one host, lean config, dashboard.
 # Run as the normal pi user (needs passwordless or interactive sudo), from a
 # checkout of this repo on the target Pi:
 #   git clone <repo-url> ~/nanoprint-src && cd ~/nanoprint-src && ./install.sh
 #
+# Number of printer instances defaults to 2; override with:
+#   PRINTER_COUNT=4 ./install.sh
+#
 # Idempotent: safe to re-run. Existing config.yaml files are never overwritten.
+# Note: RPi3-class hardware was only validated with 2 instances (see
+# LEAN_OCTOPRINT_RPi3.md) — going higher on the same board is untested; watch
+# `htop` during a real print if you push PRINTER_COUNT up.
 set -euo pipefail
 
+PRINTER_COUNT="${PRINTER_COUNT:-2}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$REPO_DIR/OctoPrint-2.0.0rc4"
 DASHBOARD_DIR="$REPO_DIR/dashboard"
 VENV_DIR="$HOME/nanoprint-venv"
-DATA1="$HOME/.nanoprint"
-DATA2="$HOME/.nanoprint2"
-PORT1=5000
-PORT2=5001
+BASE_PORT=5000
 USER_NAME="$(whoami)"
 
 log() { printf '\n\033[1;32m==> %s\033[0m\n' "$1"; }
@@ -23,6 +27,17 @@ if [[ ! -d "$SRC_DIR" ]]; then
   echo "Expected OctoPrint source at $SRC_DIR — run this script from the repo root." >&2
   exit 1
 fi
+if ! [[ "$PRINTER_COUNT" =~ ^[0-9]+$ ]] || (( PRINTER_COUNT < 1 )); then
+  echo "PRINTER_COUNT must be a positive integer, got: $PRINTER_COUNT" >&2
+  exit 1
+fi
+
+# Per-instance naming: instance 1 keeps the original names (nanoprint /
+# ~/.nanoprint) for backward compatibility with existing installs; instance
+# N>1 is nanoprintN / ~/.nanoprintN.
+svc_name()  { local i="$1"; [[ "$i" == 1 ]] && echo "nanoprint" || echo "nanoprint${i}"; }
+data_dir()  { local i="$1"; [[ "$i" == 1 ]] && echo "$HOME/.nanoprint" || echo "$HOME/.nanoprint${i}"; }
+port_for()  { local i="$1"; echo "$((BASE_PORT + i - 1))"; }
 
 log "1/9 System optimization"
 CONFIG_TXT=/boot/firmware/config.txt
@@ -57,7 +72,7 @@ pip install --quiet --upgrade pip wheel
 pip install --quiet -e "$SRC_DIR"
 deactivate
 
-log "4/9 Instance configs (lean tuning + webcam CORS)"
+log "4/9 Instance configs (lean tuning + webcam CORS) for $PRINTER_COUNT printer(s)"
 write_config() {
   local dir="$1" port="$2"
   if [[ -f "$dir/config.yaml" ]]; then
@@ -117,13 +132,11 @@ root:
   level: WARNING
 EOF
 }
-write_config "$DATA1" "$PORT1"
-write_config "$DATA2" "$PORT2"
 
 log "5/9 Serial port access"
 sudo usermod -aG dialout "$USER_NAME"
 
-log "6/9 systemd services"
+log "6/9 Per-instance configs + systemd services"
 write_service() {
   local name="$1" basedir="$2" delay="$3"
   sudo tee "/etc/systemd/system/${name}.service" >/dev/null <<EOF
@@ -149,12 +162,21 @@ Environment=HOME=${HOME}
 WantedBy=multi-user.target
 EOF
 }
-write_service nanoprint "$DATA1" 0
-write_service nanoprint2 "$DATA2" 10
-sudo systemctl daemon-reload
-sudo systemctl enable --now nanoprint nanoprint2
 
-log "7/9 nginx (static assets + dashboard, front instance 1)"
+ALL_SERVICES=()
+for ((i = 1; i <= PRINTER_COUNT; i++)); do
+  dir="$(data_dir "$i")"
+  port="$(port_for "$i")"
+  name="$(svc_name "$i")"
+  delay=$(( (i - 1) * 10 ))  # stagger startup so N instances don't hit connect/handshake at once
+  write_config "$dir" "$port"
+  write_service "$name" "$dir" "$delay"
+  ALL_SERVICES+=("$name")
+done
+sudo systemctl daemon-reload
+sudo systemctl enable --now "${ALL_SERVICES[@]}"
+
+log "7/9 nginx (static assets + dashboard, fronts instance 1)"
 sudo tee /etc/nginx/sites-available/nanoprint >/dev/null <<EOF
 server {
     listen 80;
@@ -174,7 +196,7 @@ server {
     }
 
     location / {
-        proxy_pass http://127.0.0.1:${PORT1};
+        proxy_pass http://127.0.0.1:${BASE_PORT};
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -193,20 +215,28 @@ sudo nginx -t && sudo systemctl restart nginx
 
 log "8/9 Wait for services"
 sleep 3
-sudo systemctl --no-pager status nanoprint nanoprint2 | grep -E "●|Active" || true
+sudo systemctl --no-pager status "${ALL_SERVICES[@]}" | grep -E "●|Active" || true
 
 log "9/9 Done"
 HOSTNAME_LOCAL="$(hostname).local"
+echo
+echo "nanoPrint is up — ${PRINTER_COUNT} printer instance(s)."
+echo
+for ((i = 1; i <= PRINTER_COUNT; i++)); do
+  port="$(port_for "$i")"
+  if [[ "$i" == 1 ]]; then
+    echo "  Printer 1 UI   : http://${HOSTNAME_LOCAL}/          (also http://${HOSTNAME_LOCAL}:${port})"
+  else
+    echo "  Printer ${i} UI   : http://${HOSTNAME_LOCAL}:${port}"
+  fi
+done
 cat <<EOF
-
-nanoPrint is up.
-
-  Printer 1 UI   : http://${HOSTNAME_LOCAL}/          (also http://${HOSTNAME_LOCAL}:${PORT1})
-  Printer 2 UI   : http://${HOSTNAME_LOCAL}:${PORT2}
   Dashboard      : http://${HOSTNAME_LOCAL}/dashboard/
 
 First run of each printer UI will show the OctoPrint setup wizard — connect
-each to its own USB serial port there.
+each to its own USB serial port there. Open the dashboard, click "+ Add
+Printer" for each instance beyond the first two — it defaults to
+raspberrypi.local:$((BASE_PORT + 1)), :$((BASE_PORT + 2))... matching the ports above.
 
 You were added to the 'dialout' group — log out and back in (or reboot) for
 serial port access to take effect.
