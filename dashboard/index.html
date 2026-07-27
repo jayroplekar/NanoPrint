@@ -136,10 +136,13 @@ function card(slot) {
   const cfg = loadCfg(slot);
   const el = document.createElement("div");
   el.className = "card";
+  // Static markup only — no cfg values interpolated into innerHTML.
+  // Dynamic values (name/host/port/key) are set below via textContent/.value,
+  // which never parse as HTML, so untrusted localStorage content can't inject markup.
   el.innerHTML = `
     <h2>
       <span class="dot" id="${slot}-dot"></span>
-      <button class="name-link" id="${slot}-name" onclick="openModal('${slot}')">${cfg.name}</button>
+      <button class="name-link" id="${slot}-name" onclick="openModal('${slot}')"></button>
       <button class="edit-btn" title="rename" onclick="startRename('${slot}', event)">&#9998;</button>
     </h2>
     <div class="sub" id="${slot}-state">not connected</div>
@@ -162,17 +165,21 @@ function card(slot) {
       <details>
         <summary>Connection settings</summary>
         <label>Host</label>
-        <input type="text" id="${slot}-cfg-host" value="${cfg.host}">
+        <input type="text" id="${slot}-cfg-host">
         <label>Port</label>
-        <input type="text" id="${slot}-cfg-port" value="${cfg.port}">
+        <input type="text" id="${slot}-cfg-port">
         <label>API Key</label>
-        <input type="password" id="${slot}-cfg-key" value="${cfg.key}">
+        <input type="password" id="${slot}-cfg-key">
         <div class="actions">
           <button onclick="saveSettings('${slot}')">Save</button>
         </div>
       </details>
     </div>
   `;
+  el.querySelector(`#${slot}-name`).textContent = cfg.name;
+  el.querySelector(`#${slot}-cfg-host`).value = cfg.host;
+  el.querySelector(`#${slot}-cfg-port`).value = cfg.port;
+  el.querySelector(`#${slot}-cfg-key`).value = cfg.key;
   return el;
 }
 
