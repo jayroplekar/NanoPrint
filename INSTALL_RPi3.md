@@ -3,6 +3,27 @@ Lean OctoPrint fork. 2-printer capable. Optimized for responsiveness on RPi3.
 
 ---
 
+## Quick Install (recommended)
+
+After Step 1 (flash the SD card, boot, SSH in), everything in Steps 2–9 below
+is automated by `install.sh`:
+
+```bash
+git clone <repo-url> ~/nanoprint-src && cd ~/nanoprint-src
+./install.sh
+```
+
+Sets up both printer instances (lean config, CORS for the dashboard), nginx,
+serial group membership, and the dashboard at `http://<host>.local/dashboard/`
+in one run. Safe to re-run — never overwrites an existing `config.yaml`. Skip
+to Step 10+ below only if you need to customize something the script doesn't
+cover (custom USB port mapping, webcam stream URLs — see Step 12).
+
+The manual steps below are the reference this script automates — read them if
+`install.sh` fails partway and you need to finish by hand.
+
+---
+
 ## Prerequisites
 
 - Raspberry Pi 3B or 3B+
