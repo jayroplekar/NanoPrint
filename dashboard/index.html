@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>nanoPrint Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #14161a; --panel: #1e2126; --border: #2c3038; --text: #e6e8eb;
+    --muted: #8a919e; --accent: #4f9dff; --good: #3ecf6a; --warn: #e0a52c; --bad: #e0524c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg); color: var(--text); padding: 24px;
+  }
+  h1 { font-size: 1.3rem; margin: 0 0 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 18px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px;
+  }
+  .card h2 { font-size: 1.05rem; margin: 0 0 4px; display: flex; align-items: center; gap: 6px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  .dot.online { background: var(--good); }
+  .dot.printing { background: var(--accent); }
+  .dot.offline { background: var(--bad); }
+  .name-link {
+    background: none; border: none; color: var(--text); font-size: 1.05rem; font-weight: 600;
+    cursor: pointer; padding: 2px 4px; border-radius: 4px; font-family: inherit;
+  }
+  .name-link:hover { background: #262a31; text-decoration: underline; }
+  .name-input {
+    background: #0d0f12; border: 1px solid var(--accent); color: var(--text);
+    font-size: 1.05rem; font-weight: 600; padding: 2px 4px; border-radius: 4px;
+    font-family: inherit; width: 140px;
+  }
+  .edit-btn {
+    background: none; border: none; color: var(--muted); cursor: pointer; font-size: 0.85rem;
+    padding: 2px 5px; border-radius: 4px;
+  }
+  .edit-btn:hover { color: var(--accent); background: #262a31; }
+  .sub { color: var(--muted); font-size: 0.8rem; margin-bottom: 12px; }
+  .bar { height: 8px; background: #0d0f12; border-radius: 4px; overflow: hidden; margin: 8px 0; }
+  .bar > div { height: 100%; background: var(--accent); width: 0%; transition: width .4s; }
+  .row { display: flex; justify-content: space-between; font-size: 0.85rem; margin: 4px 0; color: var(--muted); }
+  .row b { color: var(--text); font-weight: 500; }
+  .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  button, input[type=file] {
+    background: #262a31; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; font-size: 0.8rem; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.danger:hover { border-color: var(--bad); }
+  .settings { margin-top: 8px; font-size: 0.78rem; }
+  .settings details summary { cursor: pointer; color: var(--muted); }
+  .settings label { display: block; margin: 6px 0 2px; color: var(--muted); }
+  .settings input[type=text], .settings input[type=password] {
+    width: 100%; background: #0d0f12; border: 1px solid var(--border); color: var(--text);
+    padding: 5px 7px; border-radius: 5px; font-size: 0.8rem;
+  }
+  .err { color: var(--bad); font-size: 0.78rem; margin-top: 6px; min-height: 1em; }
+  .msg { color: var(--good); font-size: 0.78rem; margin-top: 6px; min-height: 1em; }
+
+  /* detail modal */
+  .overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    align-items: center; justify-content: center; z-index: 50; padding: 20px;
+  }
+  .overlay.open { display: flex; }
+  .modal {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px; width: 100%; max-width: 680px; max-height: 90vh; overflow-y: auto;
+  }
+  .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .modal-head h2 { margin: 0; font-size: 1.2rem; }
+  .close-btn { background: none; border: none; color: var(--muted); font-size: 1.3rem; cursor: pointer; line-height: 1; }
+  .close-btn:hover { color: var(--text); }
+  .cam-wrap {
+    background: #0d0f12; border: 1px solid var(--border); border-radius: 8px;
+    min-height: 200px; display: flex; align-items: center; justify-content: center;
+    margin-bottom: 14px; overflow: hidden;
+  }
+  .cam-wrap img { max-width: 100%; display: block; }
+  .cam-wrap .cam-msg { color: var(--muted); font-size: 0.85rem; padding: 20px; }
+  .modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 20px; }
+</style>
+</head>
+<body>
+<h1>nanoPrint Dashboard</h1>
+<div class="grid" id="grid"></div>
+
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="modal-name">Printer</h2>
+      <button class="close-btn" onclick="closeModal()">&times;</button>
+    </div>
+    <div class="cam-wrap" id="modal-cam"><span class="cam-msg">loading webcam...</span></div>
+    <div class="modal-grid">
+      <div class="row"><span>State</span><b id="modal-state">-</b></div>
+      <div class="row"><span>Progress</span><b id="modal-pct">-</b></div>
+      <div class="row"><span>File</span><b id="modal-file">-</b></div>
+      <div class="row"><span>Time left</span><b id="modal-eta">-</b></div>
+      <div class="row"><span>Tool</span><b id="modal-tool">-</b></div>
+      <div class="row"><span>Bed</span><b id="modal-bed">-</b></div>
+      <div class="row"><span>Host</span><b id="modal-host">-</b></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Two printers, config persisted in localStorage per slot.
+const SLOTS = ["printer1", "printer2"];
+const DEFAULTS = {
+  printer1: { name: "Printer 1", host: "127.0.0.1", port: "5000", key: "" },
+  printer2: { name: "Printer 2", host: "127.0.0.1", port: "5001", key: "" },
+};
+const POLL_MS = 5000;
+
+const cache = {};       // slot -> { job, printer, err }
+const webcamUrl = {};   // slot -> resolved stream url (or null once known-absent)
+let openSlot = null;    // slot currently shown in modal, or null
+
+function loadCfg(slot) {
+  const raw = localStorage.getItem("nanoprint_" + slot);
+  return raw ? JSON.parse(raw) : { ...DEFAULTS[slot] };
+}
+function saveCfg(slot, cfg) {
+  localStorage.setItem("nanoprint_" + slot, JSON.stringify(cfg));
+}
+function baseUrl(cfg) {
+  return `http://${cfg.host}:${cfg.port}`;
+}
+
+function card(slot) {
+  const cfg = loadCfg(slot);
+  const el = document.createElement("div");
+  el.className = "card";
+  el.innerHTML = `
+    <h2>
+      <span class="dot" id="${slot}-dot"></span>
+      <button class="name-link" id="${slot}-name" onclick="openModal('${slot}')">${cfg.name}</button>
+      <button class="edit-btn" title="rename" onclick="startRename('${slot}', event)">&#9998;</button>
+    </h2>
+    <div class="sub" id="${slot}-state">not connected</div>
+    <div class="bar"><div id="${slot}-bar"></div></div>
+    <div class="row"><span>Progress</span><b id="${slot}-pct">-</b></div>
+    <div class="row"><span>File</span><b id="${slot}-file">-</b></div>
+    <div class="row"><span>Time left</span><b id="${slot}-eta">-</b></div>
+    <div class="row"><span>Tool / Bed</span><b id="${slot}-temp">-</b></div>
+    <div class="actions">
+      <label style="font-size:.8rem;align-self:center;">
+        <input type="file" id="${slot}-file-input" accept=".gcode,.gco,.g" style="display:none">
+        <button onclick="document.getElementById('${slot}-file-input').click()">Upload &amp; Print</button>
+      </label>
+      <button onclick="pauseResume('${slot}')">Pause/Resume</button>
+      <button class="danger" onclick="cancelPrint('${slot}')">Cancel</button>
+    </div>
+    <div class="err" id="${slot}-err"></div>
+    <div class="msg" id="${slot}-msg"></div>
+    <div class="settings">
+      <details>
+        <summary>Connection settings</summary>
+        <label>Host</label>
+        <input type="text" id="${slot}-cfg-host" value="${cfg.host}">
+        <label>Port</label>
+        <input type="text" id="${slot}-cfg-port" value="${cfg.port}">
+        <label>API Key</label>
+        <input type="password" id="${slot}-cfg-key" value="${cfg.key}">
+        <div class="actions">
+          <button onclick="saveSettings('${slot}')">Save</button>
+        </div>
+      </details>
+    </div>
+  `;
+  return el;
+}
+
+// --- rename (name field itself; connection settings no longer duplicate it) ---
+function startRename(slot, evt) {
+  evt.stopPropagation();
+  const cfg = loadCfg(slot);
+  const nameBtn = document.getElementById(`${slot}-name`);
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "name-input";
+  input.value = cfg.name;
+  nameBtn.replaceWith(input);
+  input.focus();
+  input.select();
+
+  const commit = () => {
+    const val = input.value.trim() || cfg.name;
+    cfg.name = val;
+    saveCfg(slot, cfg);
+    const newBtn = document.createElement("button");
+    newBtn.className = "name-link";
+    newBtn.id = `${slot}-name`;
+    newBtn.textContent = val;
+    newBtn.onclick = () => openModal(slot);
+    input.replaceWith(newBtn);
+    if (openSlot === slot) document.getElementById("modal-name").textContent = val;
+  };
+  input.addEventListener("blur", commit);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") input.blur();
+    if (e.key === "Escape") { input.value = cfg.name; input.blur(); }
+  });
+}
+
+function saveSettings(slot) {
+  const prev = loadCfg(slot);
+  const cfg = {
+    name: prev.name,
+    host: document.getElementById(`${slot}-cfg-host`).value.trim(),
+    port: document.getElementById(`${slot}-cfg-port`).value.trim(),
+    key: document.getElementById(`${slot}-cfg-key`).value.trim(),
+  };
+  saveCfg(slot, cfg);
+  webcamUrl[slot] = undefined; // force re-resolve on next modal open, host/port may have changed
+  document.getElementById(`${slot}-msg`).textContent = "saved";
+  setTimeout(() => document.getElementById(`${slot}-msg`).textContent = "", 1500);
+  poll(slot);
+}
+
+async function api(slot, path, opts = {}) {
+  const cfg = loadCfg(slot);
+  const res = await fetch(baseUrl(cfg) + path, {
+    ...opts,
+    headers: { "X-Api-Key": cfg.key, ...(opts.headers || {}) },
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  const ct = res.headers.get("content-type") || "";
+  return ct.includes("application/json") ? res.json() : null;
+}
+
+function setDot(slot, cls) {
+  const dot = document.getElementById(`${slot}-dot`);
+  if (dot) dot.className = "dot" + (cls ? " " + cls : "");
+}
+
+function fmtTime(sec) {
+  if (sec == null) return "-";
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return h ? `${h}h ${m}m` : m ? `${m}m ${s}s` : `${s}s`;
+}
+
+function renderCard(slot) {
+  const { job, printer, err } = cache[slot] || {};
+  const errEl = document.getElementById(`${slot}-err`);
+  if (err) {
+    setDot(slot, "offline");
+    document.getElementById(`${slot}-state`).textContent = "offline / unreachable";
+    document.getElementById(`${slot}-pct`).textContent = "-";
+    document.getElementById(`${slot}-file`).textContent = "-";
+    document.getElementById(`${slot}-eta`).textContent = "-";
+    document.getElementById(`${slot}-temp`).textContent = "-";
+    errEl.textContent = err;
+    return;
+  }
+  errEl.textContent = "";
+  const state = printer?.state?.text || job?.state || "unknown";
+  document.getElementById(`${slot}-state`).textContent = state;
+  const printing = /printing/i.test(state);
+  setDot(slot, printing ? "printing" : "online");
+
+  const pct = job?.progress?.completion;
+  document.getElementById(`${slot}-pct`).textContent = pct != null ? pct.toFixed(1) + "%" : "-";
+  document.getElementById(`${slot}-bar`).style.width = (pct || 0) + "%";
+  document.getElementById(`${slot}-file`).textContent = job?.job?.file?.name || "-";
+  document.getElementById(`${slot}-eta`).textContent = fmtTime(job?.progress?.printTimeLeft);
+
+  const tool = printer?.temperature?.tool0;
+  const bed = printer?.temperature?.bed;
+  const t = tool ? `${tool.actual?.toFixed(0)}/${tool.target?.toFixed(0)}°` : "-";
+  const b = bed ? `${bed.actual?.toFixed(0)}/${bed.target?.toFixed(0)}°` : "-";
+  document.getElementById(`${slot}-temp`).textContent = `${t}  /  ${b}`;
+}
+
+function renderModal(slot) {
+  if (openSlot !== slot) return;
+  const cfg = loadCfg(slot);
+  const { job, printer, err } = cache[slot] || {};
+  document.getElementById("modal-name").textContent = cfg.name;
+  document.getElementById("modal-host").textContent = `${cfg.host}:${cfg.port}`;
+  if (err) {
+    document.getElementById("modal-state").textContent = "offline / unreachable";
+    document.getElementById("modal-pct").textContent = "-";
+    document.getElementById("modal-file").textContent = "-";
+    document.getElementById("modal-eta").textContent = "-";
+    document.getElementById("modal-tool").textContent = "-";
+    document.getElementById("modal-bed").textContent = "-";
+    return;
+  }
+  const state = printer?.state?.text || job?.state || "unknown";
+  document.getElementById("modal-state").textContent = state;
+  const pct = job?.progress?.completion;
+  document.getElementById("modal-pct").textContent = pct != null ? pct.toFixed(1) + "%" : "-";
+  document.getElementById("modal-file").textContent = job?.job?.file?.name || "-";
+  document.getElementById("modal-eta").textContent = fmtTime(job?.progress?.printTimeLeft);
+  const tool = printer?.temperature?.tool0;
+  const bed = printer?.temperature?.bed;
+  document.getElementById("modal-tool").textContent = tool ? `${tool.actual?.toFixed(1)}° / ${tool.target?.toFixed(0)}°` : "-";
+  document.getElementById("modal-bed").textContent = bed ? `${bed.actual?.toFixed(1)}° / ${bed.target?.toFixed(0)}°` : "-";
+}
+
+async function poll(slot) {
+  try {
+    const [job, printer] = await Promise.all([
+      api(slot, "/api/job"),
+      api(slot, "/api/printer"),
+    ]);
+    cache[slot] = { job, printer, err: null };
+  } catch (e) {
+    const msg = e.message.includes("Failed to fetch")
+      ? "unreachable (check host/port, CORS, or that it's on this network)"
+      : e.message;
+    cache[slot] = { job: null, printer: null, err: msg };
+  }
+  renderCard(slot);
+  renderModal(slot);
+}
+
+// --- webcam resolution (fetched lazily, once per slot, only when its modal opens) ---
+async function resolveWebcam(slot) {
+  const cfg = loadCfg(slot);
+  try {
+    const settings = await api(slot, "/api/settings");
+    const cams = settings?.webcam?.webcams || [];
+    const cam = cams.find(c => c.compat && c.compat.stream) || cams[0];
+    const stream = cam?.compat?.stream;
+    if (!stream) { webcamUrl[slot] = null; return null; }
+    const url = /^https?:\/\//i.test(stream) ? stream : baseUrl(cfg) + stream;
+    webcamUrl[slot] = url;
+    return url;
+  } catch (e) {
+    webcamUrl[slot] = null;
+    return null;
+  }
+}
+
+async function openModal(slot) {
+  openSlot = slot;
+  document.getElementById("overlay").classList.add("open");
+  renderModal(slot);
+
+  const camWrap = document.getElementById("modal-cam");
+  camWrap.innerHTML = '<span class="cam-msg">loading webcam...</span>';
+  let url = webcamUrl[slot];
+  if (url === undefined) url = await resolveWebcam(slot);
+  if (openSlot !== slot) return; // closed while awaiting
+  if (url) {
+    camWrap.innerHTML = "";
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = "webcam";
+    img.onerror = () => { camWrap.innerHTML = '<span class="cam-msg">webcam stream unavailable</span>'; };
+    camWrap.appendChild(img);
+  } else {
+    camWrap.innerHTML = '<span class="cam-msg">no webcam configured on this printer</span>';
+  }
+}
+
+function closeModal() {
+  openSlot = null;
+  document.getElementById("overlay").classList.remove("open");
+  document.getElementById("modal-cam").innerHTML = ""; // stop mjpeg stream
+}
+
+document.getElementById("overlay").addEventListener("click", (e) => {
+  if (e.target.id === "overlay") closeModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && openSlot) closeModal();
+});
+
+async function uploadAndPrint(slot, file) {
+  const msgEl = document.getElementById(`${slot}-msg`);
+  const errEl = document.getElementById(`${slot}-err`);
+  msgEl.textContent = "uploading...";
+  errEl.textContent = "";
+  const cfg = loadCfg(slot);
+  const form = new FormData();
+  form.append("file", file);
+  form.append("select", "true");
+  form.append("print", "true");
+  try {
+    const res = await fetch(baseUrl(cfg) + "/api/files/local", {
+      method: "POST",
+      headers: { "X-Api-Key": cfg.key },
+      body: form,
+    });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    msgEl.textContent = "started";
+    setTimeout(() => msgEl.textContent = "", 2000);
+    poll(slot);
+  } catch (e) {
+    msgEl.textContent = "";
+    errEl.textContent = "upload failed: " + e.message;
+  }
+}
+
+async function pauseResume(slot) {
+  try {
+    await api(slot, "/api/job", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: "pause", action: "toggle" }),
+    });
+    poll(slot);
+  } catch (e) {
+    document.getElementById(`${slot}-err`).textContent = e.message;
+  }
+}
+
+async function cancelPrint(slot) {
+  if (!confirm(`Cancel print on ${loadCfg(slot).name}?`)) return;
+  try {
+    await api(slot, "/api/job", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: "cancel" }),
+    });
+    poll(slot);
+  } catch (e) {
+    document.getElementById(`${slot}-err`).textContent = e.message;
+  }
+}
+
+const grid = document.getElementById("grid");
+SLOTS.forEach(slot => {
+  grid.appendChild(card(slot));
+  document.getElementById(`${slot}-file-input`).addEventListener("change", (e) => {
+    if (e.target.files[0]) uploadAndPrint(slot, e.target.files[0]);
+  });
+});
+
+function pollAll() { SLOTS.forEach(poll); }
+pollAll();
+setInterval(pollAll, POLL_MS);
+</script>
+</body>
+</html>

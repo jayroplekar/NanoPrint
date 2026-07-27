@@ -1,0 +1,433 @@
+name: Build
+on:
+  push:
+  pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DEFAULT_PYTHON: "3.12"
+
+jobs:
+  build:
+    name: 🔨 Build distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 🏗 Set up Python ${{ env.DEFAULT_PYTHON }}
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ env.DEFAULT_PYTHON }}
+      - name: 🏗 Set up PR environment
+        if: github.event_name == 'pull_request'
+        run: |
+          # use base ref of PR as branch name for versioning
+          echo "GIT_VERSION_BRANCH=${GITHUB_EVENT_PULL_REQUEST_BASE_REF}" >> $GITHUB_ENV
+        env:
+          GITHUB_EVENT_PULL_REQUEST_BASE_REF: ${{ github.event.pull_request.base.ref }}
+      - name: 🔨 Build distribution
+        uses: OctoPrint/actions/build-dist@main
+        with:
+          artifact: dist
+
+  pre-commit:
+    name: 🧹 Pre-commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: 🏗 Set up Python ${{ env.DEFAULT_PYTHON }}
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ env.DEFAULT_PYTHON }}
+      - name: 🚀 Run pre-commit
+        run: |
+          pip install pre-commit
+          pre-commit run --all-files --show-diff-on-failure
+
+  test-unit:
+    name: 🧪 Unit tests
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 🏗 Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: 🧰 Determine cache key
+        run: |
+          hash=$(cat setup.py | sha256sum | cut -d" " -f1)
+          echo "CACHE_KEY=${{ github.job }}-${{ runner.os }}-python-${{ matrix.python }}-setuppy-$hash" >> $GITHUB_ENV
+      - name: 🧰 Cache pip cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        id: pip-cache
+        with:
+          path: "~/.cache/pip"
+          key: "${{ env.CACHE_KEY }}"
+      - name: 🏗 Set up test dependencies
+        run: |
+          pip install -e .[develop]
+      - name: 🚀 Run test suite
+        run: |
+          pytest | tee report.txt
+          pytest_exit=${PIPESTATUS[0]}
+
+          # generate summary
+          python=$(python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')
+          today=$(date +'%Y-%m-%d')
+          now=$(date +'%H:%M')
+          summary=$(tail -n1 report.txt | sed 's/^=*\s//g' | sed 's/\s=*$//g')
+
+          cat << EOF >> $GITHUB_STEP_SUMMARY
+          ### Test Report
+
+          *generated on $today at $now under Python $python*
+
+          <details>
+          <summary>$summary</summary>
+
+          \`\`\`
+          $(cat report.txt)
+          \`\`\`
+
+          </details>
+          EOF
+
+          # make sure we fail if pytest fails!
+          exit $pytest_exit
+
+  test-js-unit:
+    name: 🧪 JavaScript unit tests
+    needs: build
+    runs-on: ubuntu-22.04 # change back to ubuntu-latest once we figure out why puppeteer is unhappy under 24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: 🏗 Set up test dependencies
+        run: |
+          npm -g install node-qunit-puppeteer@2.1.2
+      - name: 🚀 Run helpers.js test suite
+        run: |
+          node-qunit-puppeteer tests/static/js/test-helpers.html
+          node-qunit-puppeteer tests/static/js/test-client-base.html
+
+  test-install:
+    name: 🧪 Installation tests
+    needs: build
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        installable: ["wheel", "sdist"]
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⬇ Download build result
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist
+      - name: 🏗 Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: 🧰 Determine installable & cache key for wheel
+        if: matrix.installable == 'wheel'
+        run: |
+          wheel=$(ls dist/*.whl | head -n1)
+          echo "INSTALLABLE=$wheel" >> $GITHUB_ENV
+
+          metadata=$(unzip -l "$wheel" | grep METADATA | tr -s " " | cut -d" " -f 5)
+          hash=$(unzip -p "$wheel" "$metadata" | grep "Requires-Dist:" | sort  | sha256sum | cut -d" " -f1)
+          echo "CACHE_KEY=${{ github.job }}-${{ runner.os }}-python-${{ matrix.python }}-wheel-$hash" >> $GITHUB_ENV
+      - name: 🧰 Determine installable & cache key for sdist
+        if: matrix.installable == 'sdist'
+        run: |
+          sdist=$(ls dist/*.tar.gz | grep -v source | head -n1)
+          echo "INSTALLABLE=$sdist" >> $GITHUB_ENV
+
+          setup=$(tar -ztf "$sdist" | grep setup.py | grep -v testballoon)
+          hash=$(tar -axzf "$sdist" "$setup" -O | sha256sum | cut -d" " -f1)
+          echo "CACHE_KEY=${{ github.job }}-${{ runner.os }}-python-${{ matrix.python }}-setuppy-$hash" >> $GITHUB_ENV
+      - name: 🧰 Cache pip cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        id: pip-cache
+        with:
+          path: "~/.cache/pip"
+          key: "${{ env.CACHE_KEY }}"
+      - name: 🚀 Install OctoPrint
+        run: |
+          pip install ${INSTALLABLE}
+
+  test-e2e:
+    name: 🧪 E2E tests
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.13", "3.14"]
+    steps:
+      - name: ⬇ Download build result
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist
+
+      - name: 🧰 Determine installable & cache key
+        run: |
+          wheel=$(ls ${{ github.workspace }}/dist/*.whl | head -n1)
+          echo "INSTALLABLE=$wheel" >> $GITHUB_ENV
+
+          metadata=$(unzip -l "$wheel" | grep METADATA | tr -s " " | cut -d" " -f 5)
+          hash=$(unzip -p "$wheel" "$metadata" | grep "Requires-Dist:" | sort  | sha256sum | cut -d" " -f1)
+          echo "CACHE_KEY=${{ github.job }}-${{ runner.os }}-python-${{ matrix.python }}-wheel-$hash" >> $GITHUB_ENV
+
+      - name: 🧰 Cache pip cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        id: pip-cache
+        with:
+          path: "~/.cache/pip"
+          key: "${{ env.CACHE_KEY }}"
+
+      - name: 🎭 Run E2E
+        uses: OctoPrint/actions/e2e@main
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.ref }}
+          octoprint: ${{ env.INSTALLABLE }}
+          python: ${{ matrix.python }}
+          suffix: "-py${{ matrix.python }}"
+
+  test-http:
+    name: 🧪 HTTP/API tests
+    runs-on: ubuntu-22.04 # change back to ubuntu-latest once we drop Python 3.7
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: 🏗 Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: 🧰 Determine cache key
+        run: |
+          hash=$(cat setup.py | sha256sum | cut -d" " -f1)
+          echo "CACHE_KEY=${{ github.job }}-${{ runner.os }}-python-${{ matrix.python }}-setuppy-$hash" >> $GITHUB_ENV
+      - name: 🧰 Cache pip cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        id: pip-cache
+        with:
+          path: "~/.cache/pip"
+          key: "${{ env.CACHE_KEY }}"
+      - name: 🏗 Set up test dependencies
+        run: |
+          pip install -e .[develop]
+
+      - name: "🔎 Figure out location of CI related files"
+        shell: bash
+        run: |
+          if [ -d ".github/ci" ]; then
+            echo "CI_FILES=.github/ci" >> $GITHUB_ENV
+          else
+            echo "CI_FILES=.github/fixtures" >> $GITHUB_ENV
+          fi
+
+      - name: 🏗 Create base config for test server
+        shell: bash
+        run: |
+          mkdir e2econfig
+
+          CONFIG="$CI_FILES/e2econfig"
+          if [ ! -d "$CONFIG" ]; then
+            # old config location
+            CONFIG="$CI_FILES/with_acl"
+          fi
+
+          cp -r "$CONFIG"/* e2econfig
+
+      - name: 🏗 Install mfa dummy plugin if available
+        shell: bash
+        run: |
+          mfa_dummy="$CI_FILES/mfa_dummy"
+          if [ -d "$mfa_dummy" ]; then
+            mkdir -p e2econfig/plugins
+            cp -r "$mfa_dummy" "e2econfig/plugins/mfa_dummy"
+            echo "TEST_MFA=1" >> $GITHUB_ENV
+          fi
+
+      - name: 🏗 Install csrf test plugin if available
+        shell: bash
+        run: |
+          csrf_test="$CI_FILES/csrf_test.py"
+          if [ -f "$csrf_test" ]; then
+            mkdir -p e2econfig/plugins
+            cp -r "$csrf_test" "e2econfig/plugins/csrf_test.py"
+            echo "TEST_CSRF=1" >> $GITHUB_ENV
+          fi
+
+      - name: 🐙 Start & test OctoPrint server
+        shell: bash
+        run: |
+          npx start-server-and-test "octoprint -b ${{ github.workspace }}/e2econfig serve --host 127.0.0.1 --port 5000" http://127.0.0.1:5000 "pytest -v -m http_api"
+        env:
+          OCTOPRINT_SERVER_BASE: ${{ github.workspace }}/e2econfig
+          TEST_MFA: ${{ env.TEST_MFA }}
+          TEST_CSRF: ${{ env.TEST_CSRF }}
+
+      #- name: 🔎 Check octoprint.log for errors
+      #  shell: bash
+      #  run: |
+      #    echo "::group::Checking octoprint.log for errors"
+      #    log=${{ github.workspace }}/e2econfig/logs/octoprint.log
+      #    if grep "\- ERROR \-" $log; then
+      #      grep -Pazo '(?m)^\N+\- ERROR \-\N*\n(^\N*?\n)*?(?=\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} \- )' $log > octoprint-log-errors.txt
+      #
+      #      echo "::error::Errors were logged to octoprint.log"
+      #      cat octoprint-log-errors.txt
+      #
+      #      cat << EOF >> $GITHUB_STEP_SUMMARY
+      #    ### Errors logged to \`octoprint.log\`
+      #
+      #    \`\`\`
+      #    $(cat octoprint-log-errors.txt)
+      #    \`\`\`
+      #    EOF
+      #
+      #      exit 1
+      #    fi
+      #    echo "::endgroup::"
+
+      - name: ⬆ Upload OctoPrint logs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: octoprint-http-logs${{ inputs.suffix }}
+          path: ${{ github.workspace }}/e2econfig/logs
+
+  publish-on-release:
+    name: 📦 Publish build & source on GitHub release
+    if: github.event_name == 'release' && github.repository == 'OctoPrint/OctoPrint'
+    needs:
+      - pre-commit
+      - test-unit
+      - test-js-unit
+      - test-install
+      - test-e2e
+      - test-http
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: ⬇ Download build result
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist
+
+      - name: ⬆ Upload to release
+        run: |
+          UPLOAD_URL="https://uploads.github.com/repos/${{ github.repository }}/releases/${{ github.event.release.id }}/assets"
+
+          for file in dist/*; do
+            [ -e "$file" ] || exit 1
+            echo "Uploading $file..."
+            response=$(curl -s -XPOST \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: $(file -b --mime-type $file)" \
+              --data-binary @$file \
+              "$UPLOAD_URL?name=$(basename $file)")
+            echo "$response" | jq -e '.errors' >/dev/null && echo "Error uploading $file to release: $response" && exit 1 || true
+          done
+
+  publish-on-testpypi:
+    name: 📦 Publish on TestPyPI
+    if: github.event_name == 'release' && github.repository == 'OctoPrint/OctoPrint'
+    needs:
+      - publish-on-release
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/OctoPrint
+    permissions:
+      id-token: write
+    steps:
+      - name: ⬇ Download build result
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist
+      - name: 🧹 Remove some stuff that won't make it through twine check
+        run: |
+          rm dist/*.source.tar.gz
+          rm dist/sha512sums.txt
+      - name: ⬆ Upload to index
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+        continue-on-error: true
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-on-pypi:
+    name: 📦 Publish tagged releases to PyPI
+    if: github.event_name == 'release' && github.repository == 'OctoPrint/OctoPrint'
+    needs: publish-on-testpypi
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/OctoPrint
+    permissions:
+      id-token: write
+    steps:
+      - name: ⬇ Download build result
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist
+      - name: 🧹 Remove some stuff that won't make it through twine check
+        run: |
+          rm dist/*.source.tar.gz
+          rm dist/sha512sums.txt
+      - name: ⬆ Publish to index
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+
+  notify-custopizer-build:
+    name: 📧 Notify OctoPi-UpToDate
+    if: github.event_name == 'release' && github.repository == 'OctoPrint/OctoPrint'
+    needs: publish-on-pypi
+    runs-on: ubuntu-latest
+    steps:
+      - name: 👀 Determine version
+        run: |
+          OCTOPRINT_VERSION=$(echo $GITHUB_REF | cut -d/ -f3)
+          echo "OCTOPRINT_VERSION=$OCTOPRINT_VERSION" >> $GITHUB_ENV
+      - name: 🚀 Repository Dispatch
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
+        with:
+          token: ${{ secrets.REPODISPATCH_TOKEN }}
+          repository: OctoPrint/OctoPi-UpToDate
+          event-type: octoprint_release
+          client-payload: '{"version": "${{ env.OCTOPRINT_VERSION }}"}'

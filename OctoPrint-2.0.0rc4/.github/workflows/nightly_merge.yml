@@ -1,0 +1,46 @@
+name: "Nightly merge"
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  nightly-merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⬇ Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 🔀 Merge main into dev
+        uses: robotology/gh-action-nightly-merge@81570ba03dd370f582bd3f52d47672d29191829f # v1.5.2
+        with:
+          stable_branch: "main"
+          development_branch: "dev"
+          allow_ff: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🔀 Merge bugfix into dev
+        uses: robotology/gh-action-nightly-merge@81570ba03dd370f582bd3f52d47672d29191829f # v1.5.2
+        with:
+          stable_branch: "bugfix"
+          development_branch: "dev"
+          allow_ff: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🔀 Merge next into dev
+        uses: robotology/gh-action-nightly-merge@81570ba03dd370f582bd3f52d47672d29191829f # v1.5.2
+        with:
+          stable_branch: "next"
+          development_branch: "dev"
+          allow_ff: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
